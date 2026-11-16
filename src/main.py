@@ -36,6 +36,17 @@ def validate_arguments(args):
         raise ValueError("Ошибка: глубина анализа должна быть не меньше 1.")
 
 
+def load_test_repo(file_path):
+    try:
+        with open(file_path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except Exception as error:
+        raise ValueError(f"Ошибка чтения тестового файла: {error}")
+    if not isinstance(data, dict):
+        raise ValueError("Ошибка: тестовый файл должен содержать JSON-словарь.")
+    return data
+
+
 def fetch_npm_dependencies(package_name, repo_url):
     base_url = repo_url.rstrip("/")
     url = f"{base_url}/{package_name}"
@@ -44,37 +55,74 @@ def fetch_npm_dependencies(package_name, repo_url):
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         if error.code == 404:
-            raise ValueError("Ошибка HTTP 404: пакет не найден.")
+            raise ValueError(f"Ошибка HTTP 404: пакет '{package_name}' не найден.")
         raise ValueError(f"Ошибка HTTP {error.code}: ошибка сервера.")
     except Exception as error:
         raise ValueError(f"Ошибка сети: {error}")
 
     latest = data.get("dist-tags", {}).get("latest", "")
     versions = data.get("versions", {})
-    return versions.get(latest, {}).get("dependencies", {})
+    deps = versions.get(latest, {}).get("dependencies", {})
+    return list(deps.keys())
 
 
+def build_dependency_graph(start_pkg, max_depth, get_deps_func):
+    graph = {}
+    cycles = []
+    stack = [(start_pkg, 0, [start_pkg])]
+
+    while stack:
+        current_pkg, depth, path = stack.pop()
+        if current_pkg not in graph:
+            graph[current_pkg] = []
+
+        if depth >= max_depth:
+            continue
+
+        deps = get_deps_func(current_pkg)
+        for dep in reversed(deps):
+            if dep not in graph[current_pkg]:
+                graph[current_pkg].append(dep)
+            if dep in path:
+                cycles.append((current_pkg, dep))
+            elif dep not in graph:
+                stack.append((dep, depth + 1, path + [dep]))
+
+    return graph, cycles
 
 
-def print_dependencies(package_name, dependencies):
-    print(f"Прямые зависимости пакета '{package_name}':")
-    if not dependencies:
-        print("Зависимости отсутствуют.")
-        return
-    for dep_name, dep_version in dependencies.items():
-        print(f"- {dep_name}: {dep_version}")
+def print_graph_summary(start_pkg, graph, cycles):
+    print(f"Граф зависимостей для '{start_pkg}':")
+    for pkg, deps in graph.items():
+        deps_str = ", ".join(deps) if deps else "нет"
+        print(f"  {pkg} -> {deps_str}")
+
+    if cycles:
+        print("Обнаружены циклические зависимости:")
+        for src, dst in cycles:
+            print(f"  {src} -> {dst} (цикл)")
 
 
 def main():
     try:
         args = parse_arguments()
         validate_arguments(args)
-        dependencies = fetch_npm_dependencies(args.package, args.repo)
+        if args.test_mode:
+            test_data = load_test_repo(args.repo)
+            if args.package not in test_data:
+                raise ValueError(f"Ошибка: пакет '{args.package}' не найден.")
+            get_deps = lambda pkg: test_data.get(pkg, [])
+        else:
+            get_deps = lambda pkg: fetch_npm_dependencies(pkg, args.repo)
+
+        graph, cycles = build_dependency_graph(
+            args.package, args.max_depth, get_deps
+        )
     except ValueError as error:
         print(error, file=sys.stderr)
         sys.exit(1)
 
-    print_dependencies(args.package, dependencies)
+    print_graph_summary(args.package, graph, cycles)
 
 
 if __name__ == "__main__":
