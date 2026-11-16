@@ -55,7 +55,8 @@ def fetch_npm_dependencies(package_name, repo_url):
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         if error.code == 404:
-            raise ValueError(f"Ошибка HTTP 404: пакет '{package_name}' не найден.")
+            msg = f"Ошибка HTTP 404: пакет '{package_name}' не найден."
+            raise ValueError(msg)
         raise ValueError(f"Ошибка HTTP {error.code}: ошибка сервера.")
     except Exception as error:
         raise ValueError(f"Ошибка сети: {error}")
@@ -91,7 +92,29 @@ def build_dependency_graph(start_pkg, max_depth, get_deps_func):
     return graph, cycles
 
 
-def print_graph_summary(start_pkg, graph, cycles):
+def get_load_order(start_pkg, graph):
+    visited = set()
+    order = []
+    stack = [(start_pkg, False)]
+
+    while stack:
+        pkg, processed = stack.pop()
+        if processed:
+            if pkg not in order:
+                order.append(pkg)
+            continue
+        if pkg in visited:
+            continue
+        visited.add(pkg)
+        stack.append((pkg, True))
+        for dep in reversed(graph.get(pkg, [])):
+            if dep not in visited:
+                stack.append((dep, False))
+
+    return order
+
+
+def print_stage4_output(start_pkg, graph, cycles, load_order):
     print(f"Граф зависимостей для '{start_pkg}':")
     for pkg, deps in graph.items():
         deps_str = ", ".join(deps) if deps else "нет"
@@ -101,6 +124,9 @@ def print_graph_summary(start_pkg, graph, cycles):
         print("Обнаружены циклические зависимости:")
         for src, dst in cycles:
             print(f"  {src} -> {dst} (цикл)")
+
+    print("Порядок загрузки зависимостей:")
+    print("  " + " -> ".join(load_order))
 
 
 def main():
@@ -118,11 +144,12 @@ def main():
         graph, cycles = build_dependency_graph(
             args.package, args.max_depth, get_deps
         )
+        load_order = get_load_order(args.package, graph)
     except ValueError as error:
         print(error, file=sys.stderr)
         sys.exit(1)
 
-    print_graph_summary(args.package, graph, cycles)
+    print_stage4_output(args.package, graph, cycles, load_order)
 
 
 if __name__ == "__main__":

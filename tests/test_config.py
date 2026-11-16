@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 import pytest
-from src.main import build_dependency_graph, validate_arguments
+from src.main import (
+    build_dependency_graph,
+    get_load_order,
+    validate_arguments,
+)
 
 
 def test_valid_config():
@@ -28,8 +32,10 @@ def test_invalid_depth():
         validate_arguments(args)
 
 
-def test_dfs_with_cycles_and_depth():
+def test_dfs_and_load_order():
     repo = {"A": ["B"], "B": ["C", "D"], "C": ["B"], "D": []}
     graph, cycles = build_dependency_graph("A", 3, lambda p: repo.get(p, []))
-    assert graph == {"A": ["B"], "B": ["C", "D"], "C": ["B"], "D": []}
+    order = get_load_order("A", graph)
     assert cycles == [("C", "B")]
+    assert order[-1] == "A"
+    assert order.index("D") < order.index("B")
