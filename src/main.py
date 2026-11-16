@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -31,7 +32,7 @@ def validate_arguments(args):
     if not args.test_mode and not is_http:
         raise ValueError("Ошибка: URL должен начинаться с http или https.")
     if not args.output.strip().endswith(ALLOWED_EXTENSIONS):
-        raise ValueError("Ошибка: файл должен иметь расширение .svg или .png.")
+        raise ValueError("Ошибка: файл должен иметь расширение .svg/.png/.d2.")
     if args.max_depth < MIN_DEPTH:
         raise ValueError("Ошибка: глубина анализа должна быть не меньше 1.")
 
@@ -92,41 +93,62 @@ def build_dependency_graph(start_pkg, max_depth, get_deps_func):
     return graph, cycles
 
 
-def get_load_order(start_pkg, graph):
-    visited = set()
-    order = []
-    stack = [(start_pkg, False)]
+def generate_d2_text(graph):
+    lines = ["direction: down"]
+    for pkg, deps in graph.items():
+        if not deps:
+            lines.append(f'"{pkg}"')
+        for dep in deps:
+            lines.append(f'"{pkg}" -> "{dep}"')
+    return "\n".join(lines) + "\n"
+
+
+def save_graph_image(d2_text, output_path):
+    if output_path.endswith(".d2"):
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(d2_text)
+        print(f"Описание графа D2 сохранено в '{output_path}'.")
+        return
+
+    d2_temp = f"{output_path}.d2"
+    with open(d2_temp, "w", encoding="utf-8") as file:
+        file.write(d2_text)
+
+    try:
+        subprocess.run(
+            ["d2", d2_temp, output_path],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        os.remove(d2_temp)
+        print(f"Изображение графа сохранено в '{output_path}'.")
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print(f"Утилита d2 не найдена. Исходник D2 сохранён в '{d2_temp}'.")
+
+
+def print_ascii_tree(start_pkg, graph):
+    print("ASCII-дерево зависимостей:")
+    print(start_pkg)
+    stack = []
+    root_deps = graph.get(start_pkg, [])
+    for idx in range(len(root_deps) - 1, -1, -1):
+        is_last = idx == len(root_deps) - 1
+        stack.append((root_deps[idx], "", is_last, {start_pkg}))
 
     while stack:
-        pkg, processed = stack.pop()
-        if processed:
-            if pkg not in order:
-                order.append(pkg)
+        pkg, prefix, is_last, path = stack.pop()
+        connector = "└── " if is_last else "├── "
+        if pkg in path:
+            print(f"{prefix}{connector}{pkg} (цикл)")
             continue
-        if pkg in visited:
-            continue
-        visited.add(pkg)
-        stack.append((pkg, True))
-        for dep in reversed(graph.get(pkg, [])):
-            if dep not in visited:
-                stack.append((dep, False))
-
-    return order
-
-
-def print_stage4_output(start_pkg, graph, cycles, load_order):
-    print(f"Граф зависимостей для '{start_pkg}':")
-    for pkg, deps in graph.items():
-        deps_str = ", ".join(deps) if deps else "нет"
-        print(f"  {pkg} -> {deps_str}")
-
-    if cycles:
-        print("Обнаружены циклические зависимости:")
-        for src, dst in cycles:
-            print(f"  {src} -> {dst} (цикл)")
-
-    print("Порядок загрузки зависимостей:")
-    print("  " + " -> ".join(load_order))
+        print(f"{prefix}{connector}{pkg}")
+        new_prefix = prefix + ("    " if is_last else "│   ")
+        new_path = path | {pkg}
+        deps = graph.get(pkg, [])
+        for idx in range(len(deps) - 1, -1, -1):
+            child_last = idx == len(deps) - 1
+            stack.append((deps[idx], new_prefix, child_last, new_path))
 
 
 def main():
@@ -141,15 +163,18 @@ def main():
         else:
             get_deps = lambda pkg: fetch_npm_dependencies(pkg, args.repo)
 
-        graph, cycles = build_dependency_graph(
+        graph, _ = build_dependency_graph(
             args.package, args.max_depth, get_deps
         )
-        load_order = get_load_order(args.package, graph)
+        d2_text = generate_d2_text(graph)
+        print("Представление графа на языке D2:")
+        print(d2_text.strip())
+        save_graph_image(d2_text, args.output)
+        if args.ascii:
+            print_ascii_tree(args.package, graph)
     except ValueError as error:
         print(error, file=sys.stderr)
         sys.exit(1)
-
-    print_stage4_output(args.package, graph, cycles, load_order)
 
 
 if __name__ == "__main__":

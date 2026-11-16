@@ -2,7 +2,7 @@ from types import SimpleNamespace
 import pytest
 from src.main import (
     build_dependency_graph,
-    get_load_order,
+    generate_d2_text,
     validate_arguments,
 )
 
@@ -32,10 +32,9 @@ def test_invalid_depth():
         validate_arguments(args)
 
 
-def test_dfs_and_load_order():
-    repo = {"A": ["B"], "B": ["C", "D"], "C": ["B"], "D": []}
-    graph, cycles = build_dependency_graph("A", 3, lambda p: repo.get(p, []))
-    order = get_load_order("A", graph)
-    assert cycles == [("C", "B")]
-    assert order[-1] == "A"
-    assert order.index("D") < order.index("B")
+def test_d2_generation():
+    repo = {"A": ["B", "C"], "B": [], "C": []}
+    graph, _ = build_dependency_graph("A", 2, lambda p: repo.get(p, []))
+    d2_out = generate_d2_text(graph)
+    assert '"A" -> "B"' in d2_out
+    assert '"A" -> "C"' in d2_out
