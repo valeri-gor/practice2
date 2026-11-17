@@ -32,7 +32,8 @@ def validate_arguments(args):
     if not args.test_mode and not is_http:
         raise ValueError("Ошибка: URL должен начинаться с http или https.")
     if not args.output.strip().endswith(ALLOWED_EXTENSIONS):
-        raise ValueError("Ошибка: файл должен иметь расширение .svg/.png/.d2.")
+        msg = "Ошибка: файл должен иметь расширение .svg/.png/.d2."
+        raise ValueError(msg)
     if args.max_depth < MIN_DEPTH:
         raise ValueError("Ошибка: глубина анализа должна быть не меньше 1.")
 
